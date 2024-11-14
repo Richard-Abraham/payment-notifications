@@ -2,16 +2,19 @@ from fastapi import FastAPI, HTTPException
 from datetime import datetime
 import os
 from dotenv import load_dotenv
-from supabase import create_client, Client
+from supabase import create_client
 import smtplib
 from email.mime.text import MIMEText
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv()
 
 app = FastAPI()
+scheduler = AsyncIOScheduler()
 
 # Initialize Supabase client
-supabase: Client = create_client(
+supabase = create_client(
     os.getenv('SUPABASE_URL'),
     os.getenv('SUPABASE_ANON_KEY')
 )
@@ -36,8 +39,7 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
 async def root():
     return {"status": "running"}
 
-@app.post("/send-notifications")
-async def send_notifications():
+async def scheduled_notifications():
     try:
         response = supabase.table('students').select('*').eq('payment_status', 'active').execute()
         students = response.data
@@ -61,7 +63,6 @@ async def send_notifications():
                 email_body = f"Dear {student['parent_name']},\n\nThis is a {notification_type} notification for {student['name']}'s payment due on {student['next_due_date']}."
                 
                 if send_email(student['email'], f"Payment {notification_type} for {student['name']}", email_body):
-                    # Record notification in database
                     supabase.table('notifications').insert({
                         'student_id': student['id'],
                         'type': notification_type,
@@ -83,8 +84,29 @@ async def send_notifications():
         return {'results': notification_results}
 
     except Exception as e:
+        print(f"Scheduled task error: {str(e)}")
+
+@app.post("/send-notifications")
+async def send_notifications():
+    try:
+        return await scheduled_notifications()
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.on_event("startup")
+async def startup_event():
+    scheduler.add_job(
+        scheduled_notifications,
+        CronTrigger(hour=9, minute=0),  # Runs daily at 9:00 AM
+        id="send_notifications",
+        name="Send payment notifications"
+    )
+    scheduler.start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    scheduler.shutdown()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8000)

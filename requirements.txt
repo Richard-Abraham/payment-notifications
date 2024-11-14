@@ -1,5 +1,6 @@
 fastapi==0.110.0
 uvicorn==0.27.1
 python-dotenv==1.0.1
-supabase==2.4.0
+supabase==1.2.0  # Downgrading to a more stable version
 python-multipart==0.0.9
+APScheduler==3.10.4

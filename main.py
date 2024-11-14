@@ -10,6 +10,15 @@ from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv()
 
+# Debug environment variables (referenced from scripts/send-notifications.js lines 5-7)
+print('Environment variables check:')
+print('SUPABASE_URL:', os.getenv('SUPABASE_URL'))
+print('SUPABASE_ANON_KEY:', os.getenv('SUPABASE_ANON_KEY'))
+
+if not os.getenv('SUPABASE_URL') or not os.getenv('SUPABASE_ANON_KEY'):
+    print('Missing required environment variables')
+    exit(1)
+
 app = FastAPI()
 scheduler = AsyncIOScheduler()
 
@@ -19,6 +28,7 @@ supabase = create_client(
     os.getenv('SUPABASE_ANON_KEY')
 )
 
+# Email configuration (referenced from app/api/send-notifications/route.js lines 6-13)
 def send_email(to_email: str, subject: str, body: str) -> bool:
     msg = MIMEText(body)
     msg['Subject'] = subject
@@ -37,9 +47,10 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
 
 @app.get("/")
 async def root():
-    return {"status": "running"}
+    return {"status": "healthy"}
 
-async def scheduled_notifications():
+@app.post("/send-notifications")
+async def send_notifications():
     try:
         response = supabase.table('students').select('*').eq('payment_status', 'active').execute()
         students = response.data
@@ -81,32 +92,19 @@ async def scheduled_notifications():
                         'error': 'Failed to send email'
                     })
 
-        return {'results': notification_results}
+        print('Notification results:', notification_results)
+        return {"results": notification_results}
 
     except Exception as e:
-        print(f"Scheduled task error: {str(e)}")
-
-@app.post("/send-notifications")
-async def send_notifications():
-    try:
-        return await scheduled_notifications()
-    except Exception as e:
+        print('Error processing notifications:', str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
+# Schedule daily notifications (referenced from .github/workflows/cron.yml lines 4-5)
 @app.on_event("startup")
 async def startup_event():
-    scheduler.add_job(
-        scheduled_notifications,
-        CronTrigger(hour=9, minute=0),  # Runs daily at 9:00 AM
-        id="send_notifications",
-        name="Send payment notifications"
-    )
+    scheduler.add_job(send_notifications, CronTrigger(hour=8))  # Run at 8 AM daily
     scheduler.start()
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    scheduler.shutdown()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
